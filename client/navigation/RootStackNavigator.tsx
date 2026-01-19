@@ -1,12 +1,23 @@
 import React from "react";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import MainTabNavigator from "@/navigation/MainTabNavigator";
-import ModalScreen from "@/screens/ModalScreen";
 import { useScreenOptions } from "@/hooks/useScreenOptions";
+import LibraryScreen from "@/screens/LibraryScreen";
+import ReaderScreen from "@/screens/ReaderScreen";
+import SettingsScreen from "@/screens/SettingsScreen";
+
+export type PDFDocument = {
+  id: string;
+  uri: string;
+  name: string;
+  pageCount: number;
+  lastReadDate: string;
+  lastReadPage: number;
+};
 
 export type RootStackParamList = {
-  Main: undefined;
-  Modal: undefined;
+  Library: undefined;
+  Reader: { document: PDFDocument };
+  Settings: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -17,16 +28,25 @@ export default function RootStackNavigator() {
   return (
     <Stack.Navigator screenOptions={screenOptions}>
       <Stack.Screen
-        name="Main"
-        component={MainTabNavigator}
-        options={{ headerShown: false }}
+        name="Library"
+        component={LibraryScreen}
+        options={{
+          headerShown: false,
+        }}
       />
       <Stack.Screen
-        name="Modal"
-        component={ModalScreen}
+        name="Reader"
+        component={ReaderScreen}
         options={{
-          presentation: "modal",
-          headerTitle: "Modal",
+          headerShown: false,
+          animation: "fade",
+        }}
+      />
+      <Stack.Screen
+        name="Settings"
+        component={SettingsScreen}
+        options={{
+          headerTitle: "Settings",
         }}
       />
     </Stack.Navigator>
