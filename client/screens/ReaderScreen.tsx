@@ -6,35 +6,28 @@ import {
   Dimensions,
   Platform,
   ActivityIndicator,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Feather } from "@expo/vector-icons";
 import { WebView } from "react-native-webview";
+import * as FileSystem from "expo-file-system";
 import * as Haptics from "expo-haptics";
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withTiming,
-  withDelay,
-  runOnJS,
-  FadeIn,
-  FadeOut,
 } from "react-native-reanimated";
 
 import { ThemedText } from "@/components/ThemedText";
 import { useTheme } from "@/hooks/useTheme";
 import { Spacing } from "@/constants/theme";
 import { RootStackParamList } from "@/navigation/RootStackNavigator";
-import { updateReadProgress, getSettings, AppSettings } from "@/lib/storage";
+import { updateReadProgress } from "@/lib/storage";
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type ReaderRouteProp = RouteProp<RootStackParamList, "Reader">;
-
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 export default function ReaderScreen() {
   const insets = useSafeAreaInsets();
@@ -45,16 +38,32 @@ export default function ReaderScreen() {
 
   const [controlsVisible, setControlsVisible] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [pdfBase64, setPdfBase64] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(document.lastReadPage || 1);
   const [totalPages, setTotalPages] = useState(document.pageCount || 1);
-  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const controlsOpacity = useSharedValue(1);
   const hideControlsTimeout = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    getSettings().then(setSettings);
-  }, []);
+    loadPdfAsBase64();
+  }, [document.uri]);
+
+  const loadPdfAsBase64 = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const base64 = await FileSystem.readAsStringAsync(document.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      setPdfBase64(base64);
+    } catch (err) {
+      console.error("Error loading PDF:", err);
+      setError("Unable to load PDF file");
+      setLoading(false);
+    }
+  };
 
   const showControls = useCallback(() => {
     if (hideControlsTimeout.current) {
@@ -180,16 +189,31 @@ export default function ReaderScreen() {
       <script>
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
         
-        const pdfUrl = '${document.uri}';
+        const pdfBase64 = '${pdfBase64 || ""}';
         const container = document.getElementById('pdf-container');
         const loadingEl = document.getElementById('loading');
         let currentVisiblePage = 1;
         let totalPages = 1;
         let pageOffsets = [];
         
+        function base64ToArrayBuffer(base64) {
+          const binaryString = atob(base64);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          return bytes.buffer;
+        }
+        
         async function loadPDF() {
           try {
-            const pdf = await pdfjsLib.getDocument(pdfUrl).promise;
+            if (!pdfBase64) {
+              loadingEl.innerHTML = '<div id="error">No PDF data available</div>';
+              return;
+            }
+            
+            const pdfData = base64ToArrayBuffer(pdfBase64);
+            const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
             totalPages = pdf.numPages;
             loadingEl.style.display = 'none';
             
@@ -236,6 +260,10 @@ export default function ReaderScreen() {
           } catch (error) {
             loadingEl.innerHTML = '<div id="error">Unable to load PDF<br><small>' + error.message + '</small></div>';
             console.error('PDF load error:', error);
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'error',
+              message: error.message
+            }));
           }
         }
         
@@ -280,11 +308,31 @@ export default function ReaderScreen() {
         setTotalPages(data.totalPages);
       } else if (data.type === "tap") {
         toggleControls();
+      } else if (data.type === "error") {
+        setError(data.message);
+        setLoading(false);
       }
-    } catch (error) {
-      console.error("WebView message error:", error);
+    } catch (err) {
+      console.error("WebView message error:", err);
     }
   };
+
+  if (error) {
+    return (
+      <View style={[styles.container, { backgroundColor: theme.backgroundRoot }]}>
+        <View style={styles.errorContainer}>
+          <Feather name="alert-circle" size={48} color={theme.textSecondary} />
+          <ThemedText style={styles.errorText}>{error}</ThemedText>
+          <Pressable
+            onPress={handleGoBack}
+            style={[styles.errorButton, { borderColor: theme.text }]}
+          >
+            <ThemedText>Go Back</ThemedText>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.container, { backgroundColor: theme.backgroundRoot }]}>
@@ -301,28 +349,36 @@ export default function ReaderScreen() {
         />
       </View>
 
-      <WebView
-        source={{ html: pdfViewerHtml }}
-        style={styles.webview}
-        onMessage={handleWebViewMessage}
-        scrollEnabled={true}
-        bounces={true}
-        showsVerticalScrollIndicator={false}
-        showsHorizontalScrollIndicator={false}
-        allowFileAccess={true}
-        allowFileAccessFromFileURLs={true}
-        allowUniversalAccessFromFileURLs={true}
-        originWhitelist={["*"]}
-        javaScriptEnabled={true}
-        domStorageEnabled={true}
-        startInLoadingState={false}
-        scalesPageToFit={false}
-        contentMode="mobile"
-      />
+      {pdfBase64 ? (
+        <WebView
+          key={pdfBase64.substring(0, 100)}
+          source={{ html: pdfViewerHtml }}
+          style={styles.webview}
+          onMessage={handleWebViewMessage}
+          scrollEnabled={true}
+          bounces={true}
+          showsVerticalScrollIndicator={false}
+          showsHorizontalScrollIndicator={false}
+          originWhitelist={["*"]}
+          javaScriptEnabled={true}
+          domStorageEnabled={true}
+          startInLoadingState={false}
+          scalesPageToFit={false}
+          contentMode="mobile"
+          onError={(syntheticEvent) => {
+            const { nativeEvent } = syntheticEvent;
+            console.error("WebView error:", nativeEvent);
+            setError("Failed to render PDF");
+          }}
+        />
+      ) : null}
 
       {loading ? (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="large" color={theme.text} />
+          <ThemedText style={[styles.loadingText, { color: theme.textSecondary }]}>
+            Loading PDF...
+          </ThemedText>
         </View>
       ) : null}
 
@@ -369,6 +425,28 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     justifyContent: "center",
     alignItems: "center",
+    gap: Spacing.md,
+  },
+  loadingText: {
+    fontSize: 14,
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    gap: Spacing.lg,
+    padding: Spacing["2xl"],
+  },
+  errorText: {
+    fontSize: 16,
+    textAlign: "center",
+  },
+  errorButton: {
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.xl,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    marginTop: Spacing.md,
   },
   progressLine: {
     position: "absolute",
