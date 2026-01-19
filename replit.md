@@ -1,8 +1,8 @@
-# PDF Reader
+# Reflow PDF Reader
 
 ## Overview
 
-PDF Reader is a distraction-free mobile and web application for reading PDF documents with an emphasis on immersive, continuous reading. The app follows a brutally minimal design philosophy where the UI fades into the background, letting the document content be the focus. Key features include infinite scroll reading (no jarring page breaks), auto-hiding controls during reading, and a simple library for document management.
+Reflow PDF Reader is a distraction-free web application for reading PDF documents. It extracts text from PDFs and displays it in a clean, continuous, scrollable reading experience similar to browser Reader Mode. The app follows a brutally minimal design philosophy where the UI fades into the background, letting the content be the focus.
 
 ## User Preferences
 
@@ -10,22 +10,25 @@ Preferred communication style: Simple, everyday language.
 
 ## System Architecture
 
-### Multi-Platform Architecture
-The application is built as a cross-platform solution with two distinct frontends:
+### Web Application (Primary)
+The application is built as a web-only solution located in the `web/` directory:
 
-1. **React Native/Expo App** (primary) - Located in `client/` directory
-   - Uses Expo SDK 54 with the new architecture enabled
-   - Stack-only navigation pattern (no tabs) with three screens: Library, Reader, Settings
-   - React Navigation for native stack navigation
-   - Reanimated for smooth animations
-   - AsyncStorage for local document persistence
-   - TanStack Query for server state management
+- **Framework**: Vite + React 18 + TypeScript
+- **Styling**: Tailwind CSS v4
+- **PDF Processing**: pdfjs-dist (client-side text extraction)
+- **Icons**: lucide-react
+- **Build Output**: web/dist (served by Express backend)
 
-2. **Web Application** - Located in `web/` directory
-   - Standalone Vite + React + TypeScript app
-   - Tailwind CSS for styling
-   - Uses pdf.js directly for PDF rendering
-   - Simpler architecture focused on web-only experience
+### Key Features
+- Drag & drop PDF upload
+- Client-side text extraction (privacy-focused)
+- Three themes: Light, Dark, Sepia
+- Adjustable font size (14-28px)
+- Responsive design (65ch max width for readability)
+- Auto-hiding controls during reading
+
+### Legacy Expo App (Deprecated)
+The original React Native/Expo app in `client/` is deprecated due to PDF rendering issues on mobile platforms.
 
 ### Backend Architecture
 - **Express.js server** running on Node.js with TypeScript
