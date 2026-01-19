@@ -24,6 +24,7 @@
     "@react-navigation/elements": "^2.6.3",
     "@react-navigation/native": "^7.1.8",
     "@react-navigation/native-stack": "^7.3.16",
+    "@tailwindcss/postcss": "^4.1.18",
     "@tanstack/react-query": "^5.90.7",
     "@vitejs/plugin-react": "^5.1.2",
     "autoprefixer": "^10.4.23",
