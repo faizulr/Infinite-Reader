@@ -62,7 +62,6 @@ function WebPDFViewer({
   onLoaded: (totalPages: number) => void;
   onError: (message: string) => void;
 }) {
-  const containerRef = useRef<View>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [rendered, setRendered] = useState(false);
 
@@ -214,7 +213,6 @@ function NativePDFViewer({
   onError: (message: string) => void;
   onTap: () => void;
 }) {
-  const webViewRef = useRef<any>(null);
   const WebView = require("react-native-webview").WebView;
 
   const pdfViewerHtml = `
@@ -244,51 +242,73 @@ function NativePDFViewer({
       </style>
     </head>
     <body>
-      <div id="status">Loading...</div>
+      <div id="status">Loading PDF...</div>
       <div id="container"></div>
       <script>
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        
+        const base64Data = '${pdfBase64}';
         const container = document.getElementById('container');
         const status = document.getElementById('status');
-        let pageOffsets = [], currentPage = 1, totalPages = 1;
+        let pageOffsets = [];
+        let currentPage = 1;
+        let totalPages = 1;
         
-        function send(d) { window.ReactNativeWebView?.postMessage(JSON.stringify(d)); }
+        function send(d) { 
+          if (window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage(JSON.stringify(d)); 
+          }
+        }
         
-        async function load(base64) {
+        async function renderPDF() {
           try {
-            const binary = atob(base64);
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            if (!base64Data || base64Data.length === 0) {
+              throw new Error('No PDF data available');
+            }
             
+            status.textContent = 'Decoding PDF...';
+            const binary = atob(base64Data);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+              bytes[i] = binary.charCodeAt(i);
+            }
+            
+            status.textContent = 'Loading document...';
             const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
             totalPages = pdf.numPages;
-            send({ type: 'loaded', totalPages });
+            send({ type: 'loaded', totalPages: totalPages });
             
             const width = window.innerWidth;
             for (let i = 1; i <= totalPages; i++) {
-              status.textContent = 'Page ' + i + '/' + totalPages;
+              status.textContent = 'Page ' + i + ' of ' + totalPages;
               const page = await pdf.getPage(i);
               const vp = page.getViewport({ scale: 1 });
               const scale = ((width - 32) / vp.width) * 2;
-              const svp = page.getViewport({ scale });
+              const svp = page.getViewport({ scale: scale });
               
               const canvas = document.createElement('canvas');
               canvas.width = svp.width;
               canvas.height = svp.height;
-              canvas.style.width = (svp.width/2) + 'px';
-              canvas.style.height = (svp.height/2) + 'px';
+              canvas.style.width = (svp.width / 2) + 'px';
+              canvas.style.height = (svp.height / 2) + 'px';
               container.appendChild(canvas);
               
-              await page.render({ canvasContext: canvas.getContext('2d'), viewport: svp }).promise;
-              pageOffsets.push({ page: i, top: canvas.offsetTop, bottom: canvas.offsetTop + canvas.offsetHeight });
+              const ctx = canvas.getContext('2d');
+              await page.render({ canvasContext: ctx, viewport: svp }).promise;
+              pageOffsets.push({ 
+                page: i, 
+                top: canvas.offsetTop, 
+                bottom: canvas.offsetTop + canvas.offsetHeight 
+              });
             }
             
             status.style.display = 'none';
             send({ type: 'rendered' });
             
-            window.addEventListener('scroll', () => {
+            window.addEventListener('scroll', function() {
               const y = window.scrollY + window.innerHeight / 2;
-              for (const p of pageOffsets) {
+              for (let j = 0; j < pageOffsets.length; j++) {
+                const p = pageOffsets[j];
                 if (y >= p.top && y < p.bottom && currentPage !== p.page) {
                   currentPage = p.page;
                   send({ type: 'page', current: currentPage, total: totalPages });
@@ -296,16 +316,18 @@ function NativePDFViewer({
                 }
               }
             }, { passive: true });
+            
           } catch (e) {
-            status.textContent = 'Error: ' + e.message;
-            send({ type: 'error', message: e.message });
+            status.textContent = 'Error: ' + (e.message || 'Unknown error');
+            send({ type: 'error', message: e.message || 'Failed to load PDF' });
           }
         }
         
-        document.addEventListener('click', () => send({ type: 'tap' }));
-        window.addEventListener('message', e => { try { const d = JSON.parse(e.data); if (d.type === 'load') load(d.base64); } catch {} });
-        document.addEventListener('message', e => { try { const d = JSON.parse(e.data); if (d.type === 'load') load(d.base64); } catch {} });
-        send({ type: 'ready' });
+        document.addEventListener('click', function() { 
+          send({ type: 'tap' }); 
+        });
+        
+        renderPDF();
       </script>
     </body>
     </html>
@@ -314,31 +336,30 @@ function NativePDFViewer({
   const handleMessage = (event: any) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
-      if (data.type === "ready") {
-        webViewRef.current?.postMessage(JSON.stringify({ type: "load", base64: pdfBase64 }));
-      } else if (data.type === "loaded") onLoaded(data.totalPages);
+      if (data.type === "loaded") onLoaded(data.totalPages);
       else if (data.type === "rendered") onRenderComplete();
       else if (data.type === "page") onPageChange(data.current, data.total);
       else if (data.type === "tap") onTap();
       else if (data.type === "error") onError(data.message);
-    } catch {}
+    } catch (err) {
+      console.error("WebView message error:", err);
+    }
   };
 
   return (
     <WebView
-      ref={webViewRef}
       source={{ html: pdfViewerHtml }}
       style={styles.webview}
       onMessage={handleMessage}
-      onLoad={() => {
-        setTimeout(() => {
-          webViewRef.current?.postMessage(JSON.stringify({ type: "load", base64: pdfBase64 }));
-        }, 300);
-      }}
-      scrollEnabled bounces
+      scrollEnabled
+      bounces
       showsVerticalScrollIndicator={false}
       originWhitelist={["*"]}
-      javaScriptEnabled domStorageEnabled
+      javaScriptEnabled
+      domStorageEnabled
+      allowFileAccess
+      allowUniversalAccessFromFileURLs
+      mixedContentMode="always"
     />
   );
 }
@@ -371,9 +392,13 @@ export default function ReaderScreen() {
       setLoadingStatus("Reading PDF file...");
       setError(null);
       const base64Content = await readFileAsBase64(document.uri);
+      if (!base64Content || base64Content.length === 0) {
+        throw new Error("Failed to read PDF file - empty content");
+      }
       setPdfBase64(base64Content);
       setLoadingStatus("Rendering pages...");
     } catch (err: any) {
+      console.error("Error loading PDF:", err);
       setError(err?.message || "Failed to read PDF file");
       setLoading(false);
     }
