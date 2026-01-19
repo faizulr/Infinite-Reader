@@ -11,7 +11,6 @@ import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Feather } from "@expo/vector-icons";
 import { WebView } from "react-native-webview";
-import * as FileSystem from "expo-file-system";
 import * as Haptics from "expo-haptics";
 import Animated, {
   useAnimatedStyle,
@@ -27,6 +26,27 @@ import { updateReadProgress } from "@/lib/storage";
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type ReaderRouteProp = RouteProp<RootStackParamList, "Reader">;
+
+async function readFileAsBase64(uri: string): Promise<string> {
+  if (Platform.OS === "web") {
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64 = (reader.result as string).split(",")[1];
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } else {
+    const FileSystem = await import("expo-file-system");
+    return await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+  }
+}
 
 export default function ReaderScreen() {
   const insets = useSafeAreaInsets();
@@ -57,15 +77,12 @@ export default function ReaderScreen() {
       setLoadingStatus("Reading PDF file...");
       setError(null);
 
-      const base64Content = await FileSystem.readAsStringAsync(document.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-
+      const base64Content = await readFileAsBase64(document.uri);
       setPdfBase64(base64Content);
       setLoadingStatus("Rendering pages...");
     } catch (err: any) {
       console.error("Error reading PDF:", err);
-      setError(err.message || "Failed to read PDF file");
+      setError(err?.message || "Failed to read PDF file. Please try importing the file again.");
       setLoading(false);
     }
   };
