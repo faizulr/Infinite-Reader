@@ -11,6 +11,7 @@ import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Feather } from "@expo/vector-icons";
 import { WebView } from "react-native-webview";
+import * as FileSystem from "expo-file-system";
 import * as Haptics from "expo-haptics";
 import Animated, {
   useAnimatedStyle,
@@ -36,12 +37,38 @@ export default function ReaderScreen() {
 
   const [controlsVisible, setControlsVisible] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [pdfBase64, setPdfBase64] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(document.lastReadPage || 1);
   const [totalPages, setTotalPages] = useState(document.pageCount || 1);
   const [error, setError] = useState<string | null>(null);
+  const [loadingStatus, setLoadingStatus] = useState("Preparing PDF...");
 
   const controlsOpacity = useSharedValue(1);
   const hideControlsTimeout = useRef<NodeJS.Timeout | null>(null);
+  const webViewRef = useRef<WebView>(null);
+
+  useEffect(() => {
+    loadPdfFile();
+  }, [document.uri]);
+
+  const loadPdfFile = async () => {
+    try {
+      setLoading(true);
+      setLoadingStatus("Reading PDF file...");
+      setError(null);
+
+      const base64Content = await FileSystem.readAsStringAsync(document.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      setPdfBase64(base64Content);
+      setLoadingStatus("Rendering pages...");
+    } catch (err: any) {
+      console.error("Error reading PDF:", err);
+      setError(err.message || "Failed to read PDF file");
+      setLoading(false);
+    }
+  };
 
   const showControls = useCallback(() => {
     if (hideControlsTimeout.current) {
@@ -121,7 +148,7 @@ export default function ReaderScreen() {
         }
         html, body {
           width: 100%;
-          height: 100%;
+          min-height: 100%;
           background-color: ${isDark ? "#0A0A0A" : "#FFFFFF"};
           overflow-x: hidden;
           -webkit-overflow-scrolling: touch;
@@ -131,93 +158,117 @@ export default function ReaderScreen() {
           display: flex;
           flex-direction: column;
           align-items: center;
-          padding: 0 ${Spacing.lg}px;
-          padding-top: ${insets.top + 60}px;
-          padding-bottom: ${insets.bottom + 40}px;
+          padding: 0 ${Spacing.md}px;
+          padding-top: ${insets.top + 56}px;
+          padding-bottom: ${insets.bottom + 32}px;
         }
         .page-canvas {
           width: 100%;
           max-width: 100%;
           height: auto;
           display: block;
-          margin-bottom: 0;
           background: ${isDark ? "#1C1C1C" : "#FFFFFF"};
         }
-        #loading {
+        #status {
           position: fixed;
           top: 50%;
           left: 50%;
           transform: translate(-50%, -50%);
           color: ${isDark ? "#E8E8E8" : "#1A1A1A"};
           font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-          font-size: 16px;
-          text-align: center;
-        }
-        #error {
-          position: fixed;
-          top: 50%;
-          left: 50%;
-          transform: translate(-50%, -50%);
-          color: ${isDark ? "#E8E8E8" : "#1A1A1A"};
-          font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-          font-size: 16px;
+          font-size: 15px;
           text-align: center;
           padding: 20px;
+        }
+        .progress-text {
+          color: ${isDark ? "#8E8E8E" : "#6B6B6B"};
+          font-size: 13px;
+          margin-top: 8px;
         }
       </style>
     </head>
     <body>
-      <div id="loading">Loading PDF...</div>
+      <div id="status">Initializing...</div>
       <div id="pdf-container"></div>
       <script>
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
         
-        const pdfUrl = '${document.uri}';
         const container = document.getElementById('pdf-container');
-        const loadingEl = document.getElementById('loading');
+        const statusEl = document.getElementById('status');
         let currentVisiblePage = 1;
         let totalPages = 1;
         let pageOffsets = [];
         
-        async function loadPDF() {
+        function sendMessage(data) {
+          if (window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage(JSON.stringify(data));
+          }
+        }
+        
+        function updateStatus(text, subtext) {
+          statusEl.innerHTML = text + (subtext ? '<div class="progress-text">' + subtext + '</div>' : '');
+        }
+        
+        function base64ToUint8Array(base64) {
           try {
-            loadingEl.innerHTML = 'Loading PDF...';
+            const binaryString = atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes;
+          } catch (e) {
+            throw new Error('Invalid PDF data');
+          }
+        }
+        
+        async function renderPage(pdf, pageNum, containerWidth) {
+          const page = await pdf.getPage(pageNum);
+          const viewport = page.getViewport({ scale: 1 });
+          const scale = (containerWidth - 32) / viewport.width;
+          const scaledViewport = page.getViewport({ scale: scale * 2 });
+          
+          const canvas = document.createElement('canvas');
+          canvas.className = 'page-canvas';
+          canvas.width = scaledViewport.width;
+          canvas.height = scaledViewport.height;
+          canvas.style.width = (scaledViewport.width / 2) + 'px';
+          canvas.style.height = (scaledViewport.height / 2) + 'px';
+          
+          const context = canvas.getContext('2d');
+          
+          await page.render({
+            canvasContext: context,
+            viewport: scaledViewport
+          }).promise;
+          
+          return canvas;
+        }
+        
+        async function loadPDF(base64Data) {
+          try {
+            updateStatus('Decoding PDF...');
             
-            const pdf = await pdfjsLib.getDocument(pdfUrl).promise;
-            totalPages = pdf.numPages;
-            loadingEl.style.display = 'none';
-            
-            if (window.ReactNativeWebView) {
-              window.ReactNativeWebView.postMessage(JSON.stringify({
-                type: 'pdfLoaded',
-                totalPages: totalPages
-              }));
+            if (!base64Data || base64Data.length === 0) {
+              throw new Error('No PDF data received');
             }
             
-            const containerWidth = container.clientWidth;
+            const pdfData = base64ToUint8Array(base64Data);
+            
+            updateStatus('Loading document...');
+            const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
+            totalPages = pdf.numPages;
+            
+            sendMessage({ type: 'pdfLoaded', totalPages: totalPages });
+            
+            const containerWidth = window.innerWidth;
             
             for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
-              const page = await pdf.getPage(pageNum);
-              const viewport = page.getViewport({ scale: 1 });
-              const scale = containerWidth / viewport.width;
-              const scaledViewport = page.getViewport({ scale });
+              updateStatus('Rendering pages...', 'Page ' + pageNum + ' of ' + totalPages);
               
-              const canvas = document.createElement('canvas');
-              canvas.className = 'page-canvas';
-              canvas.width = scaledViewport.width * 2;
-              canvas.height = scaledViewport.height * 2;
-              canvas.style.width = scaledViewport.width + 'px';
-              canvas.style.height = scaledViewport.height + 'px';
-              
+              const canvas = await renderPage(pdf, pageNum, containerWidth);
               container.appendChild(canvas);
-              
-              const context = canvas.getContext('2d');
-              context.scale(2, 2);
-              
-              await page.render({
-                canvasContext: context,
-                viewport: scaledViewport
-              }).promise;
               
               pageOffsets.push({
                 pageNum,
@@ -226,18 +277,16 @@ export default function ReaderScreen() {
               });
             }
             
-            window.addEventListener('scroll', handleScroll);
+            statusEl.style.display = 'none';
+            sendMessage({ type: 'renderComplete' });
+            
+            window.addEventListener('scroll', handleScroll, { passive: true });
             handleScroll();
             
           } catch (error) {
-            console.error('PDF load error:', error);
-            loadingEl.innerHTML = '<div id="error">Unable to load PDF<br><br><small style="color: #888;">Please try importing the PDF again using Expo Go on your mobile device</small></div>';
-            if (window.ReactNativeWebView) {
-              window.ReactNativeWebView.postMessage(JSON.stringify({
-                type: 'error',
-                message: error.message || 'Failed to load PDF'
-              }));
-            }
+            console.error('PDF error:', error);
+            updateStatus('Unable to display PDF', error.message);
+            sendMessage({ type: 'error', message: error.message || 'Failed to load PDF' });
           }
         }
         
@@ -249,13 +298,11 @@ export default function ReaderScreen() {
             if (scrollTop >= top && scrollTop < bottom) {
               if (currentVisiblePage !== pageNum) {
                 currentVisiblePage = pageNum;
-                if (window.ReactNativeWebView) {
-                  window.ReactNativeWebView.postMessage(JSON.stringify({
-                    type: 'pageChange',
-                    currentPage: currentVisiblePage,
-                    totalPages: totalPages
-                  }));
-                }
+                sendMessage({
+                  type: 'pageChange',
+                  currentPage: currentVisiblePage,
+                  totalPages: totalPages
+                });
               }
               break;
             }
@@ -263,14 +310,33 @@ export default function ReaderScreen() {
         }
         
         document.addEventListener('click', function(e) {
-          if (window.ReactNativeWebView) {
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-              type: 'tap'
-            }));
+          sendMessage({ type: 'tap' });
+        });
+        
+        window.addEventListener('message', function(event) {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'loadPdf' && data.base64) {
+              loadPDF(data.base64);
+            }
+          } catch (e) {
+            console.error('Message parse error:', e);
           }
         });
         
-        loadPDF();
+        document.addEventListener('message', function(event) {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'loadPdf' && data.base64) {
+              loadPDF(data.base64);
+            }
+          } catch (e) {
+            console.error('Message parse error:', e);
+          }
+        });
+        
+        updateStatus('Waiting for PDF data...');
+        sendMessage({ type: 'ready' });
       </script>
     </body>
     </html>
@@ -279,11 +345,17 @@ export default function ReaderScreen() {
   const handleWebViewMessage = (event: any) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
-      if (data.type === "pageChange") {
+      
+      if (data.type === "ready" && pdfBase64) {
+        webViewRef.current?.postMessage(
+          JSON.stringify({ type: "loadPdf", base64: pdfBase64 })
+        );
+      } else if (data.type === "pageChange") {
         handlePageChange(data.currentPage, data.totalPages);
       } else if (data.type === "pdfLoaded") {
-        setLoading(false);
         setTotalPages(data.totalPages);
+      } else if (data.type === "renderComplete") {
+        setLoading(false);
       } else if (data.type === "tap") {
         toggleControls();
       } else if (data.type === "error") {
@@ -295,6 +367,16 @@ export default function ReaderScreen() {
     }
   };
 
+  const handleWebViewLoad = () => {
+    if (pdfBase64 && webViewRef.current) {
+      setTimeout(() => {
+        webViewRef.current?.postMessage(
+          JSON.stringify({ type: "loadPdf", base64: pdfBase64 })
+        );
+      }, 500);
+    }
+  };
+
   if (error) {
     return (
       <View style={[styles.container, { backgroundColor: theme.backgroundRoot }]}>
@@ -302,7 +384,7 @@ export default function ReaderScreen() {
           <Feather name="alert-circle" size={48} color={theme.textSecondary} />
           <ThemedText style={styles.errorTitle}>Unable to load PDF</ThemedText>
           <ThemedText style={[styles.errorText, { color: theme.textSecondary }]}>
-            For the best experience, please use Expo Go on your mobile device to import and read PDFs
+            {error}
           </ThemedText>
           <Pressable
             onPress={handleGoBack}
@@ -330,36 +412,36 @@ export default function ReaderScreen() {
         />
       </View>
 
-      <WebView
-        source={{ html: pdfViewerHtml }}
-        style={styles.webview}
-        onMessage={handleWebViewMessage}
-        scrollEnabled={true}
-        bounces={true}
-        showsVerticalScrollIndicator={false}
-        showsHorizontalScrollIndicator={false}
-        originWhitelist={["*"]}
-        javaScriptEnabled={true}
-        domStorageEnabled={true}
-        startInLoadingState={false}
-        scalesPageToFit={false}
-        contentMode="mobile"
-        allowFileAccess={true}
-        allowFileAccessFromFileURLs={true}
-        allowUniversalAccessFromFileURLs={true}
-        mixedContentMode="always"
-        onError={(syntheticEvent) => {
-          const { nativeEvent } = syntheticEvent;
-          console.error("WebView error:", nativeEvent);
-          setError("Failed to render PDF");
-        }}
-      />
+      {pdfBase64 ? (
+        <WebView
+          ref={webViewRef}
+          source={{ html: pdfViewerHtml }}
+          style={styles.webview}
+          onMessage={handleWebViewMessage}
+          onLoad={handleWebViewLoad}
+          scrollEnabled={true}
+          bounces={true}
+          showsVerticalScrollIndicator={false}
+          showsHorizontalScrollIndicator={false}
+          originWhitelist={["*"]}
+          javaScriptEnabled={true}
+          domStorageEnabled={true}
+          startInLoadingState={false}
+          scalesPageToFit={false}
+          contentMode="mobile"
+          onError={(syntheticEvent) => {
+            const { nativeEvent } = syntheticEvent;
+            console.error("WebView error:", nativeEvent);
+            setError("Failed to render PDF viewer");
+          }}
+        />
+      ) : null}
 
       {loading ? (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="large" color={theme.text} />
           <ThemedText style={[styles.loadingText, { color: theme.textSecondary }]}>
-            Loading PDF...
+            {loadingStatus}
           </ThemedText>
         </View>
       ) : null}
