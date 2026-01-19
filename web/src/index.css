@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.theme-light {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f9fafb;
+  --text-primary: #1f2937;
+  --text-secondary: #6b7280;
+  --border: #e5e7eb;
+}
+
+.theme-dark {
+  --bg-primary: #111827;
+  --bg-secondary: #1f2937;
+  --text-primary: #f9fafb;
+  --text-secondary: #9ca3af;
+  --border: #374151;
+}
+
+.theme-sepia {
+  --bg-primary: #faf6f1;
+  --bg-secondary: #f5ede0;
+  --text-primary: #3f2d1f;
+  --text-secondary: #7c5a35;
+  --border: #e8d9c0;
+}
+
+.reader-content {
+  line-height: 1.8;
+  letter-spacing: 0.01em;
+}
+
+.reader-content p {
+  margin-bottom: 1.5em;
+  text-align: justify;
+  hyphens: auto;
+}
+
+@media (max-width: 640px) {
+  .reader-content p {
+    text-align: left;
+    hyphens: none;
+  }
+}
