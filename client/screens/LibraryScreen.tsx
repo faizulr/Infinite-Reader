@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback } from "react";
 import {
   View,
   StyleSheet,
@@ -13,7 +13,6 @@ import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Feather } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
-import * as FileSystem from "expo-file-system";
 import * as Haptics from "expo-haptics";
 import Animated, {
   useAnimatedStyle,
@@ -29,7 +28,6 @@ import { useTheme } from "@/hooks/useTheme";
 import { Spacing, BorderRadius } from "@/constants/theme";
 import { RootStackParamList, PDFDocument } from "@/navigation/RootStackNavigator";
 import { getDocuments, saveDocument, deleteDocument } from "@/lib/storage";
-import { HeaderButton } from "@react-navigation/elements";
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -85,7 +83,9 @@ function PDFCard({
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
         onLongPress={() => {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          if (Platform.OS !== "web") {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          }
           onDelete();
         }}
         style={[
@@ -185,7 +185,7 @@ function EmptyState({ onImport }: { onImport: () => void }) {
 export default function LibraryScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NavigationProp>();
-  const { theme, isDark } = useTheme();
+  const { theme } = useTheme();
   const [documents, setDocuments] = useState<PDFDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
@@ -210,6 +210,7 @@ export default function LibraryScreen() {
   const handleImport = async () => {
     try {
       setImporting(true);
+      
       const result = await DocumentPicker.getDocumentAsync({
         type: "application/pdf",
         copyToCacheDirectory: true,
@@ -218,34 +219,28 @@ export default function LibraryScreen() {
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const file = result.assets[0];
         
-        const docDir = FileSystem.documentDirectory + "pdfs/";
-        const dirInfo = await FileSystem.getInfoAsync(docDir);
-        if (!dirInfo.exists) {
-          await FileSystem.makeDirectoryAsync(docDir, { intermediates: true });
-        }
-
-        const newUri = docDir + file.name;
-        await FileSystem.copyAsync({
-          from: file.uri,
-          to: newUri,
-        });
-
         const newDoc: PDFDocument = {
           id: Date.now().toString(),
-          uri: newUri,
-          name: file.name,
+          uri: file.uri,
+          name: file.name || `Document-${Date.now()}.pdf`,
           pageCount: 1,
           lastReadDate: new Date().toISOString(),
           lastReadPage: 0,
         };
 
         await saveDocument(newDoc);
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        
+        if (Platform.OS !== "web") {
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+        
         await loadDocuments();
       }
     } catch (error) {
       console.error("Error importing PDF:", error);
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      if (Platform.OS !== "web") {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      }
     } finally {
       setImporting(false);
     }
@@ -254,7 +249,9 @@ export default function LibraryScreen() {
   const handleDelete = async (id: string) => {
     try {
       await deleteDocument(id);
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      if (Platform.OS !== "web") {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
       await loadDocuments();
     } catch (error) {
       console.error("Error deleting document:", error);
@@ -262,7 +259,9 @@ export default function LibraryScreen() {
   };
 
   const handleOpenDocument = (document: PDFDocument) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
     navigation.navigate("Reader", { document });
   };
 
@@ -486,6 +485,9 @@ const styles = StyleSheet.create({
       },
       android: {
         elevation: 4,
+      },
+      web: {
+        boxShadow: "0px 2px 4px rgba(0, 0, 0, 0.1)",
       },
     }),
   },
